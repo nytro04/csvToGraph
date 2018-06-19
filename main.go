@@ -1,9 +1,6 @@
 package main
  
 import (
-	// "gonum.org/v1/plot/vg/vgsvg"
-	// "gonum.org/v1/plot/vg/draw"
-	"gonum.org/v1/plot/plotutil"
 	"gonum.org/v1/plot/vg"
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
@@ -15,10 +12,27 @@ import (
     "io"
     "net/http"
     "os"
+	"gonum.org/v1/plot/plotutil"
+	"gonum.org/v1/plot/vg/vgsvg"
+	"math"
+	"gonum.org/v1/plot/vg/draw"
+	"bytes"
 )
 
+func renderSVG(p *plot.Plot) string {
+	size := 10 * vg.Centimeter
+	canvas := vgsvg.New(size, size/vg.Length(math.Phi))
+	p.Draw(draw.New(canvas))
+	out := new(bytes.Buffer)
+	_, err := canvas.WriteTo(out)
+	if err != nil {
+		panic(err)
+	}
+	return string(out.Bytes())
+}
+
 // GetCsv gets the and returns a processed picture
-func GetCsv(filepath string) (err error) {
+func GetCsv(filepath string) (string, error) {
 
 		// Open the csv file
 		file, err := os.Open(filepath)
@@ -101,21 +115,19 @@ func GetCsv(filepath string) (err error) {
 		}
 		janDeb.LineStyle.Width = vg.Length(0)
 		janDeb.Color = plotutil.Color(1)
-	
-	
-	
+
 		p.Add(janBar, janDeb)
 		p.Legend.Add("Credit", janBar)
 		p.Legend.Add("Debit", janDeb)
 	
 		p.Legend.Top = true
-		p.NominalX("One", "Two")	
+		p.NominalX("One", "Two")
 
 		if err := p.Save(5*vg.Inch, 3*vg.Inch, "janTran.png"); err != nil {
 			log.Println(err)
 		}
 	
-	return err
+	return renderSVG(p), err
 }
 
 
@@ -129,7 +141,7 @@ func upload(w http.ResponseWriter, r *http.Request) {
  
     } else if r.Method == "POST" {
         // Post
-        err := GetCsv("work.csv")
+        _, err := GetCsv("work.csv")
         if err != nil {
 			log.Println(err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -141,8 +153,15 @@ func upload(w http.ResponseWriter, r *http.Request) {
         fmt.Println("Unknown HTTP " + r.Method + "  Method")
     }
 }
- 
+
+func defaultCSV(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	x, _ := GetCsv("work.csv")
+	fmt.Fprint(w, x)
+}
+
 func main() {
     http.HandleFunc("/upload", upload)
+	http.HandleFunc("/work.csv", defaultCSV)
     http.ListenAndServe(":8000", nil) // setting listening port
 }
