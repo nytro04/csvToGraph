@@ -1,167 +1,131 @@
 package main
- 
+
+
 import (
-	"gonum.org/v1/plot/vg"
-	"gonum.org/v1/plot"
-	"gonum.org/v1/plot/plotter"
-	"strconv"
-	"encoding/csv"
+	"fmt"
+	"github.com/wcharczuk/go-chart"
 	"log"
-    "fmt"
-    "html/template"
-    "io"
-    "net/http"
-    "os"
-	"gonum.org/v1/plot/plotutil"
-	"gonum.org/v1/plot/vg/vgsvg"
-	"math"
-	"gonum.org/v1/plot/vg/draw"
-	"bytes"
+	"strconv"
+	"strings"
+	"net/http"
+	"encoding/csv"
+	"io"
+	"os"
 )
 
-func renderSVG(p *plot.Plot) string {
-	size := 10 * vg.Centimeter
-	canvas := vgsvg.New(size, size/vg.Length(math.Phi))
-	p.Draw(draw.New(canvas))
-	out := new(bytes.Buffer)
-	_, err := canvas.WriteTo(out)
+type Statement struct {
+	credit int `json:"credit"`
+	debit  int `json:"debit"`
+}
+
+func parseCSV(r io.Reader)(Statement, error) {
+
+	csvFile := csv.NewReader(r)
+
+	records, err := csvFile.ReadAll()
 	if err != nil {
-		panic(err)
+		log.Println(err)
 	}
-	return string(out.Bytes())
-}
 
-// GetCsv gets the and returns a processed picture
-func GetCsv(filepath string) (string, error) {
+	// skips first line of csv
+	records = records[1:]
+	credit := 0
+	debit := 0
 
-		// Open the csv file
-		file, err := os.Open(filepath)
-		if err != nil {
-			log.Println("Could not open csv file", err)
-		}
-	
-		// Read from the file
-		reader := csv.NewReader(file)
-	
-		defer file.Close()
-	
-		reader.FieldsPerRecord = -1
-		credit := 0
-		debit := 0
-	
-		for {
-	
-			records, err := reader.Read()
-			if err == io.EOF {
-				break
-			}
-	
-			if records[3] == "AMOUNT" {
-				continue
-			}
-	
-			if err != nil {
-				log.Printf("Can not read CSV file %s", err)
-				continue
-			}
-	
-			price, err := strconv.Atoi(records[3])
-			if err != nil {
-				log.Printf("Can not retrieve amount %s", err)
-			} 
-	
-			if records[2] == "C" {
-				credit += price
-			} else {
-				debit += price
-			}
-	
-			// fmt.Printf("This is the credit transaction %d", credit)
-			// fmt.Printf("This is the debit transaction %d",debit)
-			
-		}
-	
-		// fmt.Println("This is the credit transaction ", credit)
-		// fmt.Println("This is the debit transaction ",debit)
-	
-		creditfloat := float64(credit)
-		debitfloat  := float64(debit)
-	
-		// Plotting with gonums
-		creditTran := plotter.Values{creditfloat}
-		debitTran  := plotter.Values{debitfloat}
-	
-		p, err := plot.New()
+	for _, record := range records {
+		amount, err := strconv.Atoi(record[3])
 		if err != nil {
 			log.Println(err)
 		}
-		p.Title.Text = "Bar Charts"
-		p.Y.Label.Text = "Amount"
-		p.X.Label.Text = "Transaction Type"
-	
-		w := vg.Points(20)
-	
-		janBar, err := plotter.NewBarChart(creditTran, w)
-		if err != nil {
-			log.Println(err)
-		}
-		janBar.LineStyle.Width = vg.Length(0)
-		janBar.Color = plotutil.Color(0)
-		janBar.Offset = -w
-	
-		janDeb, err := plotter.NewBarChart(debitTran, w)
-		if err != nil {
-			log.Println(err)
-		}
-		janDeb.LineStyle.Width = vg.Length(0)
-		janDeb.Color = plotutil.Color(1)
 
-		p.Add(janBar, janDeb)
-		p.Legend.Add("Credit", janBar)
-		p.Legend.Add("Debit", janDeb)
-	
-		p.Legend.Top = true
-		p.NominalX("One", "Two")
-
-		if err := p.Save(5*vg.Inch, 3*vg.Inch, "janTran.png"); err != nil {
-			log.Println(err)
+		if record[2] == "C" {
+			credit += amount
+		} else {
+			debit += amount
 		}
+	}
 	
-	return renderSVG(p), err
+	s := Statement{credit, debit}
+
+	return s, err
+
 }
 
 
-func upload(w http.ResponseWriter, r *http.Request) {
- 
-    if r.Method == "GET" {
-        // GET
-        t, _ := template.ParseFiles("index.html")
- 
-        t.Execute(w, nil)
- 
-    } else if r.Method == "POST" {
-        // Post
-        _, err := GetCsv("work.csv")
-        if err != nil {
-			log.Println(err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-        }
- 
- 
-    } else {
-        fmt.Println("Unknown HTTP " + r.Method + "  Method")
-    }
+func drawChart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		return
+	}
+
+	// makes sure type is of multipart-form
+	if content := r.Header.Get("Content-Type"); !strings.HasPrefix(content, "multipart/form-data") {
+		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		return
+	}
+
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s, err := parseCSV(file)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	fmt.Println(s)
+
+	sbc := chart.BarChart{
+		Title:      "Test Bar Chart",
+		TitleStyle: chart.StyleShow(),
+		Background: chart.Style{
+			Padding: chart.Box{
+				Top: 40,
+			},
+		},
+		Height:   512,
+		BarWidth: 60,
+		XAxis: chart.Style{
+			Show: true,
+		},
+		YAxis: chart.YAxis{
+			Style: chart.Style{
+				Show: true,
+			},
+		},
+		Bars: []chart.Value{
+			{Value: float64(s.credit), Label: "Blue"},
+			{Value: float64(s.debit), Label: "Green"},
+		},
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	err = sbc.Render(chart.PNG, w)
+	if err != nil {
+		log.Printf("Error rendering chart: %v\n", err)
+		return
+	}
 }
 
-func defaultCSV(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	x, _ := GetCsv("work.csv")
-	fmt.Fprint(w, x)
-}
 
 func main() {
-    http.HandleFunc("/upload", upload)
-	http.HandleFunc("/work.csv", defaultCSV)
-    http.ListenAndServe(":8000", nil) // setting listening port
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/draw", drawChart)
+
+	mux.Handle("/", http.FileServer(http.Dir("static")))
+
+	port := 3000
+	if postStr, ok := os.LookupEnv("PORT"); ok {
+		if i, err := strconv.Atoi(postStr); err == nil {
+			port = i
+		}
+	}
+
+	log.Printf("starting server on http://localhost:%d/\n", port)
+	log.Fatalln(http.ListenAndServe(fmt.Sprintf(":%d", port), mux))
 }
